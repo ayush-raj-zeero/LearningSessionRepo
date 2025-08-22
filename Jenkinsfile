@@ -6,8 +6,11 @@ pipeline {
     }
     environment {
         REPO_URL = "https://github.com/ayush-raj-zeero/LearningSessionRepo.git"
-        APP_NAME = "AyushLearningSession"
-        DOCKER_IMAGE = "ayush_learning_session"
+        INTEGRATION_TESTS_REPO = "https://github.com/ayush-raj-zeero/IntegrationTestLearningSessionRepo.git"
+        BETA_URL="http://10.3.0.10:8088"
+        GAMMA_URL="http://10.3.0.10:8089"
+        APP_NAME = "PoornaLearningSession"
+        DOCKER_IMAGE = "poorna_learning_session"
         BETA_PORT = 8088
         GAMMA_PORT = 8089
         SERVER_IP = "localhost"
@@ -17,8 +20,16 @@ pipeline {
     stages {
         stage ("Checkout") {
             steps {
-                git url: "${REPO_URL}", branch: 'main'
-                sh 'chmod +x mvnw'
+                script {
+                    dir('source') {
+                        git url: "${REPO_URL}", branch: 'main'
+                    }
+                    dir('tests') {
+                        git url: "${INTEGRATION_TESTS_REPO}", branch: 'main'
+                    }
+                }
+                sh 'chmod +x source/mvnw'
+                sh 'chmod +x tests/mvnw'
             }
         }
         stage ("Create Log Directory") {
@@ -28,15 +39,19 @@ pipeline {
         }
         stage ("Build") {
             steps {
-                sh './mvnw clean package'
+                dir('source') {
+                    sh './mvnw clean package'
+                }
             }
         }
         stage ("Build Docker Image") {
             steps {
-                script {
-                    sh """
-                        docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
-                    """
+                dir('source') {
+                    script {
+                        sh """
+                            docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
+                        """
+                    }
                 }
             }
         }
@@ -63,6 +78,21 @@ pipeline {
                 }
             }
         }
+        stage('Beta Integration Tests') {
+            when {
+                expression { currentBuild.result == null || currentBuild.result == 'SUCCESS' }
+            }
+            steps {
+                dir('tests') {
+                    sh '''
+                        ./mvnw test -DserviceUrl=${BETA_URL}
+                        if [ -d "target/failsafe-reports" ]; then
+                        grep -l "FAILURE" target/failsafe-reports/*.txt && exit 1 || exit 0
+                        fi
+                    '''
+                }
+            }
+        }
         stage('Deploy to Gamma') {
              when {
                 expression { currentBuild.result == null || currentBuild.result == 'SUCCESS' }
@@ -85,6 +115,21 @@ pipeline {
                     sh "docker ps | grep ${APP_NAME}-gamma || exit 1"
                 }
              }
+        }
+        stage('Gamma Integration Tests') {
+            when {
+                expression { currentBuild.result == null || currentBuild.result == 'SUCCESS' }
+            }
+            steps {
+                dir('tests') {
+                    sh '''
+                        ./mvnw test -DserviceUrl=${GAMMA_URL}
+                        if [ -d "target/failsafe-reports" ]; then
+                        grep -l "FAILURE" target/failsafe-reports/*.txt && exit 1 || exit 0
+                        fi
+                    '''
+                }
+            }
         }
     }
 }
